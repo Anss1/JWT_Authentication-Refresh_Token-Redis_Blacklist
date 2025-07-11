@@ -21,7 +21,8 @@ public class JwtService {
     @Value("${app.secret.key}")
     private String secretKey;
 
-    private final static long EXPIRATION = 1000 * 60 * 15;
+    @Value("${jwt.access-token.expiration-ms}")
+    private long accessTokenExpirationMs;
 
     public String generateAccessToken(User user) {
         Map<String, Object> claims = new HashMap<>();
@@ -35,7 +36,7 @@ public class JwtService {
                 .setClaims(claims)
                 .setSubject(subject)
                 .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + JwtService.EXPIRATION))
+                .setExpiration(new Date(System.currentTimeMillis() + accessTokenExpirationMs))
                 .signWith(getSignInKey(), SignatureAlgorithm.HS256)
                 .compact();
     }

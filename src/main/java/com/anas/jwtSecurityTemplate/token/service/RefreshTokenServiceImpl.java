@@ -1,11 +1,14 @@
 package com.anas.jwtSecurityTemplate.token.service;
 
 import com.anas.jwtSecurityTemplate.auth.entity.User;
+import com.anas.jwtSecurityTemplate.exception.InvalidTokenException;
 import com.anas.jwtSecurityTemplate.token.entity.RefreshToken;
 import com.anas.jwtSecurityTemplate.token.repository.RefreshTokenRepository;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -14,34 +17,49 @@ import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
-public class RefreshTokenService {
+public class RefreshTokenServiceImpl implements IRefreshTokenService {
 
     private final RefreshTokenRepository refreshTokenRepository;
+    private final PasswordEncoder passwordEncoder;
 
-    private final static long EXPIRATION = 7 * 24 * 60 * 60 * 1000; // 7 days
+    @Value("${jwt.refresh-token.expiration-ms}")
+    private long refreshTokenExpirationMs;
 
     public String createRefreshToken(User user) {
+        String secret = UUID.randomUUID().toString();
+        String identifier = UUID.randomUUID().toString();
+        String hashedSecret = passwordEncoder.encode(secret);
+
         RefreshToken token = RefreshToken.builder()
                 .user(user)
-                .token(UUID.randomUUID().toString())
-                .expiryDate(Instant.now().plusMillis(EXPIRATION))
+                .tokenIdentifier(identifier)
+                .token(hashedSecret)
+                .expiryDate(Instant.now().plusMillis(refreshTokenExpirationMs))
                 .revoked(false)
                 .build();
 
         refreshTokenRepository.save(token);
-        return token.getToken();
+        return identifier + ":" + secret;
     }
 
     public User validateRefreshToken(String tokenStr) {
-        RefreshToken token = refreshTokenRepository.findByToken(tokenStr)
-                .orElseThrow(() -> new RuntimeException("Invalid refresh token"));
+        String[] tokenParts = parseToken(tokenStr);
+        String identifier = tokenParts[0];
+        String secret = tokenParts[1];
+
+        RefreshToken token = refreshTokenRepository.findByTokenIdentifier(identifier)
+                .orElseThrow(() -> new RuntimeException("Invalid refresh token: identifier not found"));
+
+        if (!passwordEncoder.matches(secret, token.getToken())) {
+            throw new RuntimeException("Invalid refresh token: secret mismatch");
+        }
 
         if (token.isRevoked()) {
             throw new RuntimeException("Refresh token revoked");
         }
 
         if (token.getExpiryDate().isBefore(Instant.now())) {
-            throw new RuntimeException("Refresh token expired");
+            throw new InvalidTokenException("Refresh token has expired");
         }
 
         return token.getUser();
@@ -49,12 +67,22 @@ public class RefreshTokenService {
 
     @Transactional
     public void revokeRefreshToken(String tokenStr) {
-        RefreshToken token = refreshTokenRepository.findByToken(tokenStr)
+        String[] tokenParts = parseToken(tokenStr);
+        String identifier = tokenParts[0];
+        RefreshToken token = refreshTokenRepository.findByTokenIdentifier(identifier)
                 .orElseThrow(() -> new RuntimeException("Refresh token not found"));
 
         token.setRevoked(true);
         refreshTokenRepository.save(token);
     }
+
+    @Transactional
+    public String rotateRefreshToken(String oldTokenStr) {
+        User user = validateRefreshToken(oldTokenStr);
+        revokeRefreshToken(oldTokenStr);
+        return createRefreshToken(user);
+    }
+
     @Transactional
     public void revokeRefreshToken(User user) {
         for (RefreshToken token : refreshTokenRepository.findAllByUser(user)) {
@@ -72,5 +100,12 @@ public class RefreshTokenService {
     @Transactional
     public void cleanOldRevokedTokens() {
         refreshTokenRepository.deleteAllByRevokedIsTrueAndExpiryDateBefore(Instant.now().minus(30, ChronoUnit.DAYS));
+    }
+
+    private String[] parseToken(String tokenStr) {
+        if (tokenStr == null || !tokenStr.contains(":")) {
+            throw new IllegalArgumentException("Invalid refresh token format");
+        }
+        return tokenStr.split(":", 2);
     }
 }

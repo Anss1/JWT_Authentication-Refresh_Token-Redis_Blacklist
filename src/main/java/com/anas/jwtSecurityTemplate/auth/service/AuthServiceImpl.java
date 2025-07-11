@@ -4,7 +4,8 @@ import com.anas.jwtSecurityTemplate.auth.dto.*;
 import com.anas.jwtSecurityTemplate.auth.entity.User;
 import com.anas.jwtSecurityTemplate.auth.jwt.JwtService;
 import com.anas.jwtSecurityTemplate.auth.repository.UserRepository;
-import com.anas.jwtSecurityTemplate.token.service.RefreshTokenService;
+import com.anas.jwtSecurityTemplate.exception.ResourceNotFoundException;
+import com.anas.jwtSecurityTemplate.token.service.IRefreshTokenService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -14,13 +15,13 @@ import org.springframework.stereotype.Service;
 
 @Service
 @RequiredArgsConstructor
-public class AuthService {
+public class AuthServiceImpl implements IAuthService{
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final TokenBlacklistService tokenBlacklistService;
-    private final RefreshTokenService refreshTokenService;
+    private final IRefreshTokenService refreshTokenService;
     private final AuthenticationManager authenticationManager;
 
     public AuthResponse register(RegisterRequest request) {
@@ -46,7 +47,7 @@ public class AuthService {
         );
 
         User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow();
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
         String accessToken = jwtService.generateAccessToken(user);
         String refreshToken = refreshTokenService.createRefreshToken(user);
@@ -57,8 +58,9 @@ public class AuthService {
     public AuthResponse refreshToken(String refreshToken) {
         User user = refreshTokenService.validateRefreshToken(refreshToken);
         String newAccessToken = jwtService.generateAccessToken(user);
+        String newRefreshToken = refreshTokenService.rotateRefreshToken(refreshToken);
 
-        return new AuthResponse(newAccessToken, refreshToken); // keep same refresh token
+        return new AuthResponse(newAccessToken, newRefreshToken);
     }
 
     public void logout(String authHeader) {
@@ -69,7 +71,8 @@ public class AuthService {
         String accessToken = authHeader.substring(7);
         long remainingMillis = jwtService.getRemainingMillis(accessToken);
 
-        User user = userRepository.findByEmail(jwtService.extractUsername(accessToken)).orElseThrow();
+        User user = userRepository.findByEmail(jwtService.extractUsername(accessToken))
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
         refreshTokenService.revokeRefreshToken(user); //
         tokenBlacklistService.blacklistToken(accessToken, remainingMillis);
