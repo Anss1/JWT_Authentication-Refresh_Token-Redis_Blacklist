@@ -129,7 +129,3 @@ The following are the primary authentication endpoints:
 ## 🤝 Contributing
 
 Feel free to fork the repository, open issues, and submit pull requests.
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
